@@ -11,6 +11,8 @@
   "author": "Marc Farra <marcfarra@gmail.com>",
   "license": "ISC",
   "dependencies": {
-    "sax-async": "0.0.4"
+    "knex": "^0.15.0",
+    "sax-async": "0.0.4",
+    "sqlite3": "^4.0.1"
   }
 }
