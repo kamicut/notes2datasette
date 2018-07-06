@@ -1,0 +1,4 @@
+*.xml
+*.osn*
+*.bz2
+node_modules

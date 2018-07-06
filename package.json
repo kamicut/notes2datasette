@@ -1,0 +1,16 @@
+{
+  "name": "notes2datasette",
+  "version": "0.1.0",
+  "description": "Turn OSM notes into a datasette",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "Marc Farra <marcfarra@gmail.com>",
+  "license": "ISC",
+  "dependencies": {
+    "sax-async": "0.0.4"
+  }
+}
