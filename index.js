@@ -1,31 +1,80 @@
 const SaxAsync = require('sax-async');
 const fs = require('fs');
+const sqlite3 = require('sqlite3');
 const through2 = require('through2');
 const duplexify = require('duplexify');
 
-const BATCH_SIZE = 1;
+const BATCH_SIZE = 5000;
+
+const path = './notes.sqlite';
+const db = new sqlite3.Database(path);
+db.serialize(
+    function () {
+        db.run('PRAGMA synchronous = OFF');
+        db.run('PRAGMA journal_mode = MEMORY');
+        db.run(`CREATE TABLE IF NOT EXISTS comments (
+            id INT PRIMARY KEY NOT NULL,
+            note_id INT,
+            latitude REAL,
+            longitude REAL,
+            created_at INTEGER,
+            closed_at INTEGER,
+            action TEXT,
+            timestamp INTEGER,
+            uid TEXT,
+            user TEXT,
+            text TEXT
+        )
+        `);
+        db.run('DELETE FROM comments');
+        main(db);
+    }
+)
 
 
-const knex = require('knex')({
-    client: 'sqlite3',
-    connection: {
-        filename: "./notes.sqlite"
-    },
-    pool: {
-        afterCreate: (conn, cb) =>
-            conn.run(`PRAGMA synchronous = OFF`, function () {
-                conn.run('PRAGMA journal_mode = MEMORY', cb)
+function main(db) {
+    let num_comments = 0;
+    let buffer = []
+    const batch = through2.obj(function (record, enc, callback) {
+        buffer.push(record)
+        if (buffer.length >= BATCH_SIZE) {
+            this.push(buffer)
+            buffer = []
+        }
+        callback()
+    }, function (callback) {
+        if (buffer.length) {
+            this.push(buffer)
+        }
+        callback()
+    })
+
+    const stmt = db.prepare('INSERT INTO comments VALUES(?,?,?,?,?,?,?,?,?,?,?)');
+    const batchSave = (db) => through2.obj(function (records, enc, callback) {
+        db.serialize(function () {
+            db.run('BEGIN TRANSACTION');
+            records.forEach(function (record) {
+                stmt.run([
+                    num_comments, record.note_id, record.latitude, record.longitude, record.created_at,
+                    record.closed_at, record.action, record.timestamp, record.uid, record.user,
+                    record.text
+                ])
+                num_comments += 1;
+                process.stdout.write(`saved ${num_comments} comments\r`);
             })
-    },
-    useNullAsDefault: true
-});
+            db.run('COMMIT');
+        })
+        callback();
+    })
 
-function main(tr) {
     console.log('parsing');
     fs.createReadStream('./notes.xml')
         .pipe(parseNotes())
- //       .pipe(batch)
-        .pipe(batchSave(tr))
+        .pipe(batch)
+        .pipe(batchSave(db))
+        .on('end', function () {
+            db.close();
+        })
         .on('error', function (err) {
             console.error(err);
             process.exit(1);
@@ -33,69 +82,6 @@ function main(tr) {
 }
 
 
-
-/* 
-Check if table exists
-If it does, truncate the data
-else create the table
-*/
-knex.schema.hasTable('comments')
-.then(function (exists) {
-    if (!exists) {
-        console.log('creating table')
-        return knex.schema.createTable('comments', table => {
-            table.increments('id');
-            table.integer('note_id');
-            table.float('latitude');
-            table.float('longitude');
-            table.dateTime('created_at');
-            table.dateTime('closed_at');
-            table.string('action');
-            table.datetime('timestamp');
-            table.string('uid');
-            table.string('user');
-            table.text('text');
-        })
-    }
-    else {
-        console.log('table exists, truncating')
-        return knex('comments').truncate()
-    }
-})
-.then(
-    () => {
-            main(knex)
-    })
-.catch(function (err) {
-    console.error(err)
-    process.exit(1);
-})
-
-let num_comments = 0;
-const batchSave = (knex) => through2.obj(function (records, enc, callback) {
-    return knex('comments').insert(records)
-        .then(function () {
-            num_comments += BATCH_SIZE;
-            process.stdout.write(`saved ${num_comments} comments\r`)
-            return callback();
-        });
-});
-
-let buffer = []
-const batch = through2.obj(function (record, enc, callback) {
-    buffer.push(record)
-    if (buffer.length >= BATCH_SIZE) {
-        this.push(buffer)
-        delete(buffer)
-        buffer = []
-    }
-    callback()
-}, function () {
-    if (buffer.length) {
-        this.push(buffer)
-    }
-    callback()
-})
 
 /** 
  * Code adapted from
@@ -162,6 +148,11 @@ function parseNotes() {
             currentComment.text = text;
         }
     });
+
+    saxStream.hookSync('end', function () {
+        // Close the stream
+        ts.end();
+    })
 
     return dup;
 }
